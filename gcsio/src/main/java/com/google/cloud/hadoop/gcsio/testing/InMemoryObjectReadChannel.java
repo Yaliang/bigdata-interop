@@ -60,7 +60,7 @@ public class InMemoryObjectReadChannel
    * @throws IOException on IO error
    */
   @Override
-  protected InputStream openStreamAndSetMetadata(long newPosition)
+  protected InputStream openStreamAndSetMetadata(long newPosition, long limit)
       throws IOException {
     validatePosition(newPosition);
     setSize(channelContents.length);

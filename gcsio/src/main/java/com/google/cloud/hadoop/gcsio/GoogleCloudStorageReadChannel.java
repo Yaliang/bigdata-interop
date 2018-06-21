@@ -362,7 +362,7 @@ public class GoogleCloudStorageReadChannel
     // bytes or we reach end-of-stream.
     do {
       // Perform a lazy seek if not done already.
-      performLazySeek();
+      performLazySeek(buffer.remaining());
       int remainingBeforeRead = buffer.remaining();
       try {
         int numBytesRead = readChannel.read(buffer);
@@ -608,7 +608,7 @@ public class GoogleCloudStorageReadChannel
       throws IOException {
     throwIfNotOpen();
     // Perform a lazy seek if not done already so that size of this channel is set correctly.
-    performLazySeek();
+    performLazySeek(-1);
     return size;
   }
 
@@ -656,7 +656,7 @@ public class GoogleCloudStorageReadChannel
    * @throws IOException on IO error
    */
   @VisibleForTesting
-  void performLazySeek() throws IOException {
+  void performLazySeek(long limit) throws IOException {
 
     // Return quickly if there is no pending seek operation.
     if (!lazySeekPending) {
@@ -666,7 +666,7 @@ public class GoogleCloudStorageReadChannel
     // Close the underlying channel if it is open.
     closeReadChannel();
 
-    InputStream objectContentStream = openStreamAndSetMetadata(currentPosition);
+    InputStream objectContentStream = openStreamAndSetMetadata(currentPosition, limit);
     readChannel = Channels.newChannel(objectContentStream);
     lazySeekPending = false;
   }
@@ -724,19 +724,22 @@ public class GoogleCloudStorageReadChannel
    */
   protected void setSize(HttpResponse response, long offset) throws IOException {
     String contentRange = response.getHeaders().getContentRange();
-    if (response.getHeaders().getContentLength() != null) {
-      size = response.getHeaders().getContentLength() + offset;
-    } else if (contentRange != null) {
+    if (contentRange != null) {
       String sizeStr = SLASH.split(contentRange)[1];
       try {
         size = Long.parseLong(sizeStr);
+        return;
       } catch (NumberFormatException e) {
-        throw new IOException(
+        LOG.debug(
             "Could not determine size from response from Content-Range: " + contentRange, e);
       }
-    } else {
-      throw new IOException("Could not determine size of response");
     }
+    if (response.getHeaders().getContentLength() != null) {
+      size = response.getHeaders().getContentLength() + offset;
+      return;
+    }
+
+    throw new IOException("Could not determine size of response");
   }
 
   /**
@@ -750,22 +753,35 @@ public class GoogleCloudStorageReadChannel
    * @param newPosition position to seek into the new stream.
    * @throws IOException on IO error
    */
-  protected InputStream openStreamAndSetMetadata(long newPosition)
+  protected InputStream openStreamAndSetMetadata(long newPosition, long limit)
       throws IOException {
     if (fileEncoding == FileEncoding.UNINITIALIZED) {
       StorageObject metadata = getMetadata();
       fileEncoding = getEncoding(metadata);
+      size = metadata.getSize().longValue();
+    }
+    if (size < 0) {
+      size = getMetadata().getSize().longValue();
     }
     validatePosition(newPosition);
     Storage.Objects.Get getObject = createRequest();
+
     // Set the range on the existing request headers that may have been initialized with things
     // like user-agent already. If the file is gzip encoded, request the entire file.
+    String newRange = fileEncoding == FileEncoding.GZIPPED
+        ? "bytes=0-"
+        : limit > 0
+          ? String.format("bytes=%d-%d", newPosition,
+                Math.min(newPosition + limit, size - 1))
+          : readOptions.getBufferSize() > 0
+            ? String.format("bytes=%d-%d", newPosition,
+                  Math.min(newPosition + readOptions.getBufferSize(), size - 1))
+            : String.format("bytes=%d-", newPosition);
+    LOG.debug("send request with range header: {}, limit: {}.", newRange, limit);
+
     clientRequestHelper
         .getRequestHeaders(getObject)
-        .setRange(
-            fileEncoding == FileEncoding.GZIPPED
-                ? "bytes=0-"
-                : String.format("bytes=%d-", newPosition));
+        .setRange(newRange);
     HttpResponse response;
     try {
       response = getObject.executeMedia();
