@@ -784,7 +784,12 @@ public class GoogleCloudStorageReadChannel
         .setRange(newRange);
     HttpResponse response;
     try {
-      response = getObject.executeMedia();
+      response = ResilientOperation.retry(
+          ResilientOperation.getStorageCallable(getObject),
+          new RetryBoundedBackOff(maxRetries, resetOrCreateBackOff()),
+          RetryDeterminer.SOCKET_ERRORS,
+          IOException.class,
+          sleeper);
     } catch (IOException e) {
       if (errorExtractor.itemNotFound(e)) {
         throw GoogleCloudStorageExceptions.getFileNotFoundException(bucketName, objectName);
@@ -806,6 +811,8 @@ public class GoogleCloudStorageReadChannel
           throw new IOException(msg, e);
         }
       }
+    } catch (InterruptedException e) {  // From the sleep
+      throw new IOException("Thread interrupt received.", e);
     }
     InputStream content = null;
     try {

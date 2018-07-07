@@ -17,9 +17,13 @@
 package com.google.cloud.hadoop.util;
 
 import com.google.api.client.googleapis.services.AbstractGoogleClientRequest;
+import com.google.api.client.http.HttpResponse;
 import com.google.api.client.util.BackOff;
 import com.google.api.client.util.Preconditions;
 import com.google.api.client.util.Sleeper;
+import com.google.api.services.storage.Storage;
+import com.google.api.services.storage.StorageRequest;
+
 import java.io.IOException;
 import java.util.concurrent.Callable;
 import org.slf4j.Logger;
@@ -135,6 +139,33 @@ public class ResilientOperation {
   public interface CheckedCallable<T, X extends Exception> extends Callable<T> {
     @Override
     T call() throws X;
+  }
+
+  /**
+   * Returns a {@link CheckedCallable} that encompasses a {@link Storage.Objects.Get} and
+   * can be used to retry the execution for an Storage.Objects.Get.
+   *
+   * @param request The Storage.Objects.Get to turn into a {@link CheckedCallable}.
+   * @return a CheckedCallable object that attempts a Storage.Objects.Get
+   */
+  public static CheckedCallable<HttpResponse, IOException> getStorageCallable(
+      Storage.Objects.Get request) {
+    return new StorageRequestExecutor(request);
+  }
+
+  /**
+   * Simple class to create a {@link CheckedCallable} from a {@link Storage.Objects.Get}.
+   */
+  private static class StorageRequestExecutor
+      implements CheckedCallable<HttpResponse, IOException> {
+    Storage.Objects.Get request;
+    private StorageRequestExecutor(Storage.Objects.Get request) {
+      this.request = request;
+    }
+    @Override
+    public HttpResponse call() throws IOException {
+      return request.executeMedia();
+    }
   }
 
   /**
