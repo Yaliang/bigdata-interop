@@ -24,6 +24,7 @@ import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.http.HttpResponse;
 import com.google.api.client.http.HttpStatusCodes;
 import com.google.api.client.http.HttpUnsuccessfulResponseHandler;
+import com.google.api.client.util.BackOff;
 import com.google.api.client.util.ExponentialBackOff;
 import com.google.api.client.util.Sleeper;
 import com.google.common.annotations.VisibleForTesting;
@@ -255,10 +256,15 @@ public class RetryHttpInitializer implements HttpRequestInitializer {
     request.setConnectTimeout(connectTimeoutMillis);
     request.setReadTimeout(readTimeoutMillis);
 
+    // ExponentialBackOff
+    BackOff backOff = new ExponentialBackOff.Builder()
+        .setMaxElapsedTimeMillis(Integer.MAX_VALUE)
+        .build();
+
     // IOExceptions such as "socket timed out" of "insufficient bytes written" will follow a
     // straightforward backoff.
     HttpBackOffIOExceptionHandler exceptionHandler =
-        new HttpBackOffIOExceptionHandler(new ExponentialBackOff());
+        new HttpBackOffIOExceptionHandler(backOff);
     if (sleeperOverride != null) {
       exceptionHandler.setSleeper(sleeperOverride);
     }
